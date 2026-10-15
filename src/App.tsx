@@ -1,13 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ActiveTab, Product, Sale, StockLog, AdminUser, StoreBackupData } from './types';
+import { ActiveTab, Product, Sale, StockLog, AdminUser, StoreBackupData, Customer, Bill } from './types';
 import {
   initStorage,
   getStoredProducts,
-  saveStoredProducts,
-  getStoredSales,
-  saveStoredSales,
-  getStoredStockLogs,
-  saveStoredStockLogs,
   getStoredAdmin,
   setStoredAdmin,
   clearAllStoreData,
@@ -19,6 +14,22 @@ import {
   createPreRestoreSafetyBackup,
   restoreBackupToStorage,
 } from './utils/backup';
+import {
+  subscribeToInventory,
+  subscribeToSales,
+  subscribeToCustomers,
+  subscribeToBills,
+  subscribeToStockLogs,
+  saveProductToFirestore,
+  deleteProductFromFirestore,
+  batchSaveProductsToFirestore,
+  recordSaleToFirestore,
+  saveStockLogToFirestore,
+  batchSaveStockLogsToFirestore,
+  clearAllFirestoreData,
+  restoreBackupToFirestore,
+  autoMigrateLocalStorageToFirestore,
+} from './services/firestoreService';
 import { AlertTriangle, RotateCcw, X, Shield, CheckCircle2 } from 'lucide-react';
 import { LoginPage } from './components/LoginPage';
 import { Navbar } from './components/Navbar';
@@ -31,14 +42,18 @@ import { ProductFormModal } from './components/ProductFormModal';
 import { SaleReceiptModal } from './components/SaleReceiptModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { BackupRestoreModal } from './components/BackupRestoreModal';
+import { BarcodeScannerModal } from './components/BarcodeScannerModal';
 
 export default function App() {
   // Store Admin & Data State
   const [admin, setAdmin] = useState<AdminUser | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [bills, setBills] = useState<Bill[]>([]);
   const [stockLogs, setStockLogs] = useState<StockLog[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [isCloudSynced, setIsCloudSynced] = useState(true);
 
   // UI Navigation & Modals
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
@@ -51,6 +66,12 @@ export default function App() {
   const [backupModalMode, setBackupModalMode] = useState<'download' | 'restore'>('download');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Barcode Scanner State
+  const [isBarcodeScannerOpen, setIsBarcodeScannerOpen] = useState(false);
+  const [scannerOrigin, setScannerOrigin] = useState<'sales' | 'stock' | 'product_form'>('sales');
+  const [scannedInitialBarcode, setScannedInitialBarcode] = useState<string>('');
+  const [highlightedStockProductId, setHighlightedStockProductId] = useState<string | null>(null);
+
   // Restore Backup File Picker & Confirmation State
   const restoreFileInputRef = useRef<HTMLInputElement>(null);
   const [pendingRestore, setPendingRestore] = useState<{
@@ -60,19 +81,83 @@ export default function App() {
   const [restoreValidationError, setRestoreValidationError] = useState<string | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
 
-  // Initialize storage
+  // Real-time Firestore sync setup
   useEffect(() => {
     initStorage();
     const storedAdmin = getStoredAdmin();
-    const storedProducts = getStoredProducts();
-    const storedSales = getStoredSales();
-    const storedLogs = getStoredStockLogs();
-
     setAdmin(storedAdmin);
-    setProducts(storedProducts);
-    setSales(storedSales);
-    setStockLogs(storedLogs);
-    setIsInitialized(true);
+
+    let isMounted = true;
+
+    // Check if auto-migration from local storage to Firestore is needed so laptop and mobile both see existing data
+    autoMigrateLocalStorageToFirestore()
+      .then((res) => {
+        if (res.migrated) {
+          showToast(`Synced ${res.productCount} existing items to Firebase Cloud!`);
+        }
+      })
+      .catch((err) => console.warn('Auto migration error:', err));
+
+    // 1. Realtime listener for 'inventory' collection
+    const unsubInventory = subscribeToInventory(
+      (firestoreProducts) => {
+        if (!isMounted) return;
+        setProducts(firestoreProducts);
+        setIsCloudSynced(true);
+        setIsInitialized(true);
+      },
+      (err) => {
+        console.error('Inventory Firestore error:', err);
+        const fallback = getStoredProducts();
+        if (fallback.length > 0) setProducts(fallback);
+        setIsInitialized(true);
+      }
+    );
+
+    // 2. Realtime listener for 'sales' collection
+    const unsubSales = subscribeToSales(
+      (firestoreSales) => {
+        if (!isMounted) return;
+        setSales(firestoreSales);
+      },
+      (err) => console.error('Sales Firestore error:', err)
+    );
+
+    // 3. Realtime listener for 'customers' collection
+    const unsubCustomers = subscribeToCustomers(
+      (firestoreCustomers) => {
+        if (!isMounted) return;
+        setCustomers(firestoreCustomers);
+      },
+      (err) => console.error('Customers Firestore error:', err)
+    );
+
+    // 4. Realtime listener for 'bills' collection
+    const unsubBills = subscribeToBills(
+      (firestoreBills) => {
+        if (!isMounted) return;
+        setBills(firestoreBills);
+      },
+      (err) => console.error('Bills Firestore error:', err)
+    );
+
+    // 5. Realtime listener for 'stock_logs' collection
+    const unsubLogs = subscribeToStockLogs(
+      (firestoreLogs) => {
+        if (!isMounted) return;
+        setStockLogs(firestoreLogs);
+      },
+      (err) => console.error('Stock logs Firestore error:', err)
+    );
+
+    return () => {
+      isMounted = false;
+      unsubInventory();
+      unsubSales();
+      unsubCustomers();
+      unsubBills();
+      unsubLogs();
+    };
   }, []);
 
   const showToast = (msg: string) => {
@@ -95,13 +180,20 @@ export default function App() {
     showToast('Admin logged out.');
   };
 
-  const handleClearAllData = () => {
-    if (window.confirm('Are you sure you want to clear all products and sales data?')) {
-      clearAllStoreData();
-      setProducts([]);
-      setSales([]);
-      setStockLogs([]);
-      showToast('All inventory and sales data cleared.');
+  const handleClearAllData = async () => {
+    if (window.confirm('Are you sure you want to clear all products, sales, customers, and bills from Firebase Cloud?')) {
+      try {
+        await clearAllFirestoreData();
+        clearAllStoreData();
+        setProducts([]);
+        setSales([]);
+        setStockLogs([]);
+        setCustomers([]);
+        setBills([]);
+        showToast('All inventory and sales data cleared from Cloud.');
+      } catch (err: any) {
+        alert(`Error clearing data: ${err?.message || 'Unknown error'}`);
+      }
     }
   };
 
@@ -164,18 +256,19 @@ export default function App() {
   };
 
   // 5. Handle Confirmed Restore
-  const handleConfirmPendingRestore = () => {
+  const handleConfirmPendingRestore = async () => {
     if (!pendingRestore) return;
     setIsRestoring(true);
 
     try {
-      // DATA SAFETY: Automatically preserve safety snapshot of current live data in storage first (no unwanted downloads)
+      // DATA SAFETY: Automatically preserve safety snapshot
       createPreRestoreSafetyBackup(products, sales, stockLogs, false);
+      restoreBackupToStorage(pendingRestore.backupData);
 
-      // Write validated restored data to persistent localStorage
-      const success = restoreBackupToStorage(pendingRestore.backupData);
+      // Write validated restored data to Firestore cloud
+      const success = await restoreBackupToFirestore(pendingRestore.backupData);
       if (!success) {
-        throw new Error('Failed to save restored data to local storage.');
+        throw new Error('Failed to save restored data to Firebase Firestore.');
       }
 
       // Immediately update active app state to refresh dashboard and all screens
@@ -188,7 +281,7 @@ export default function App() {
       setStockLogs(restoredStockLogs);
 
       showToast(
-        `Backup restored successfully! ${restoredProducts.length} products, ${restoredSales.length} sales loaded.`
+        `Backup restored to Firebase Cloud! ${restoredProducts.length} products, ${restoredSales.length} sales loaded.`
       );
       setPendingRestore(null);
     } catch (err: any) {
@@ -204,7 +297,7 @@ export default function App() {
     showToast('Restore cancelled. Current store data preserved intact.');
   };
 
-  const handleDataRestored = (
+  const handleDataRestored = async (
     newProducts: Product[],
     newSales: Sale[],
     newStockLogs: StockLog[]
@@ -212,48 +305,114 @@ export default function App() {
     setProducts(newProducts);
     setSales(newSales);
     setStockLogs(newStockLogs);
+    try {
+      await restoreBackupToFirestore({
+        appName: "Somaiya Men's Wear",
+        version: '2.0',
+        exportTimestamp: new Date().toISOString(),
+        exportDateFormatted: new Date().toLocaleDateString(),
+        summary: {
+          totalProducts: newProducts.length,
+          totalStockUnits: newProducts.reduce((acc, p) => acc + p.quantity, 0),
+          totalSales: newSales.length,
+          totalStockLogs: newStockLogs.length,
+        },
+        data: {
+          products: newProducts,
+          sales: newSales,
+          stockLogs: newStockLogs,
+        },
+      });
+      showToast('Restored data synced across cloud devices!');
+    } catch (err) {
+      console.error('Error syncing restored data to Firestore:', err);
+    }
+  };
+
+  // Barcode Scanner Handlers
+  const handleOpenScanner = (origin: 'sales' | 'stock' | 'product_form') => {
+    setScannerOrigin(origin);
+    setIsBarcodeScannerOpen(true);
+  };
+
+  const handleBarcodeScanned = (scannedCode: string) => {
+    setIsBarcodeScannerOpen(false);
+    const code = scannedCode.trim();
+    if (!code) return;
+
+    if (scannerOrigin === 'product_form') {
+      setScannedInitialBarcode(code);
+      showToast(`Scanned Barcode: ${code}`);
+      return;
+    }
+
+    // Search existing products by barcode, sku, or ID
+    const matched = products.find(
+      (p) =>
+        (p.barcode && p.barcode.trim().toLowerCase() === code.toLowerCase()) ||
+        (p.sku && p.sku.trim().toLowerCase() === code.toLowerCase()) ||
+        p.id === code
+    );
+
+    if (matched) {
+      if (scannerOrigin === 'sales') {
+        setPreselectedSaleProduct(matched);
+        setActiveTab('sales');
+        showToast(`Barcode Matched: [${matched.sku}] ${matched.name}`);
+      } else if (scannerOrigin === 'stock') {
+        setHighlightedStockProductId(matched.id);
+        setActiveTab('stock');
+        showToast(`Stock Selected: [${matched.sku}] ${matched.name}`);
+      }
+    } else {
+      // Barcode not found in inventory: open Add New Product modal pre-filled with scanned barcode
+      setProductToEdit(null);
+      setScannedInitialBarcode(code);
+      setIsProductModalOpen(true);
+      showToast(`Barcode "${code}" not found. Pre-filled in New Product!`);
+    }
   };
 
   // Product CRUD
-  const handleSaveProduct = (productData: Partial<Product>) => {
+  const handleSaveProduct = async (productData: Partial<Product>) => {
     const now = new Date().toISOString();
 
     if (productToEdit) {
       // Update existing product
-      const updatedProducts = products.map((p) => {
-        if (p.id === productToEdit.id) {
-          const oldQty = p.quantity;
-          const newQty = productData.quantity ?? oldQty;
+      const oldQty = productToEdit.quantity;
+      const newQty = productData.quantity ?? oldQty;
 
-          if (newQty !== oldQty) {
-            const newLog: StockLog = {
-              id: `log-${Date.now()}`,
-              productId: p.id,
-              productName: productData.name || p.name,
-              type: 'ADJUST',
-              quantityChanged: newQty - oldQty,
-              previousQuantity: oldQty,
-              newQuantity: newQty,
-              reason: 'Updated via Product Edit',
-              date: now,
-            };
-            const updatedLogs = [newLog, ...stockLogs];
-            setStockLogs(updatedLogs);
-            saveStoredStockLogs(updatedLogs);
-          }
+      let newLog: StockLog | null = null;
+      if (newQty !== oldQty) {
+        newLog = {
+          id: `log-${Date.now()}`,
+          productId: productToEdit.id,
+          productName: productData.name || productToEdit.name,
+          type: 'ADJUST',
+          quantityChanged: newQty - oldQty,
+          previousQuantity: oldQty,
+          newQuantity: newQty,
+          reason: 'Updated via Product Edit',
+          date: now,
+        };
+      }
 
-          return {
-            ...p,
-            ...productData,
-            updatedAt: now,
-          } as Product;
+      const updatedProd: Product = {
+        ...productToEdit,
+        ...productData,
+        updatedAt: now,
+      } as Product;
+
+      try {
+        await saveProductToFirestore(updatedProd);
+        if (newLog) {
+          await saveStockLogToFirestore(newLog);
         }
-        return p;
-      });
-
-      setProducts(updatedProducts);
-      saveStoredProducts(updatedProducts);
-      showToast(`Updated "${productData.name || productToEdit.name}"`);
+        showToast(`Updated "${productData.name || productToEdit.name}" (Synced to Cloud)`);
+      } catch (err: any) {
+        console.error('Error updating product in Firestore:', err);
+        showToast(`Saved locally. Cloud sync pending.`);
+      }
     } else {
       // Create new product
       const newProduct: Product = {
@@ -273,44 +432,47 @@ export default function App() {
         updatedAt: now,
       };
 
-      const updatedProducts = [newProduct, ...products];
-      setProducts(updatedProducts);
-      saveStoredProducts(updatedProducts);
-
-      if (newProduct.quantity > 0) {
-        const newLog: StockLog = {
-          id: `log-${Date.now()}`,
-          productId: newProduct.id,
-          productName: newProduct.name,
-          type: 'IN',
-          quantityChanged: newProduct.quantity,
-          previousQuantity: 0,
-          newQuantity: newProduct.quantity,
-          reason: 'Initial stock entry',
-          date: now,
-        };
-        const updatedLogs = [newLog, ...stockLogs];
-        setStockLogs(updatedLogs);
-        saveStoredStockLogs(updatedLogs);
+      try {
+        await saveProductToFirestore(newProduct);
+        if (newProduct.quantity > 0) {
+          const newLog: StockLog = {
+            id: `log-${Date.now()}`,
+            productId: newProduct.id,
+            productName: newProduct.name,
+            type: 'IN',
+            quantityChanged: newProduct.quantity,
+            previousQuantity: 0,
+            newQuantity: newProduct.quantity,
+            reason: 'Initial stock entry',
+            date: now,
+          };
+          await saveStockLogToFirestore(newLog);
+        }
+        showToast(`Added "${newProduct.name}" to inventory (Synced to Cloud)`);
+      } catch (err: any) {
+        console.error('Error adding product to Firestore:', err);
+        showToast(`Added locally. Cloud sync pending.`);
       }
-
-      showToast(`Added "${newProduct.name}" to inventory`);
     }
 
     setProductToEdit(null);
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!productToDelete) return;
-    const updatedProducts = products.filter((p) => p.id !== productToDelete.id);
-    setProducts(updatedProducts);
-    saveStoredProducts(updatedProducts);
-    showToast(`Deleted "${productToDelete.name}" from inventory`);
+    const prod = productToDelete;
     setProductToDelete(null);
+    try {
+      await deleteProductFromFirestore(prod.id);
+      showToast(`Deleted "${prod.name}" from inventory (Synced to Cloud)`);
+    } catch (err: any) {
+      console.error('Error deleting product from Firestore:', err);
+      showToast(`Error deleting product.`);
+    }
   };
 
   // Stock Adjustments
-  const handleAdjustStock = (
+  const handleAdjustStock = async (
     productId: string,
     quantityChange: number,
     type: 'IN' | 'OUT' | 'ADJUST',
@@ -343,18 +505,12 @@ export default function App() {
       }
     }
 
-    const updatedProducts = products.map((p) =>
-      p.id === productId
-        ? {
-            ...p,
-            quantity: newQty,
-            sizeQuantities: updatedSizeQuantities ?? p.sizeQuantities,
-            updatedAt: now,
-          }
-        : p
-    );
-    setProducts(updatedProducts);
-    saveStoredProducts(updatedProducts);
+    const updatedProduct: Product = {
+      ...product,
+      quantity: newQty,
+      sizeQuantities: updatedSizeQuantities ?? product.sizeQuantities,
+      updatedAt: now,
+    };
 
     const newLog: StockLog = {
       id: `log-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -368,9 +524,12 @@ export default function App() {
       date: now,
     };
 
-    const updatedLogs = [newLog, ...stockLogs];
-    setStockLogs(updatedLogs);
-    saveStoredStockLogs(updatedLogs);
+    try {
+      await saveProductToFirestore(updatedProduct);
+      await saveStockLogToFirestore(newLog);
+    } catch (err) {
+      console.error('Error updating stock in Firestore:', err);
+    }
   };
 
   const handleQuickAdjustStock = (productId: string, delta: number) => {
@@ -381,20 +540,22 @@ export default function App() {
     handleAdjustStock(productId, delta, type, reason);
   };
 
-  const handleBatchRestock = (productIds: string[], amountPerItem: number) => {
+  const handleBatchRestock = async (productIds: string[], amountPerItem: number) => {
     const now = new Date().toISOString();
-    let updatedProducts = [...products];
+    const updatedProducts: Product[] = [];
     const newLogs: StockLog[] = [];
 
     productIds.forEach((id) => {
-      const product = updatedProducts.find((p) => p.id === id);
+      const product = products.find((p) => p.id === id);
       if (product) {
         const previousQty = product.quantity;
         const newQty = previousQty + amountPerItem;
 
-        updatedProducts = updatedProducts.map((p) =>
-          p.id === id ? { ...p, quantity: newQty, updatedAt: now } : p
-        );
+        updatedProducts.push({
+          ...product,
+          quantity: newQty,
+          updatedAt: now,
+        });
 
         newLogs.push({
           id: `log-${Date.now()}-${id}`,
@@ -410,17 +571,17 @@ export default function App() {
       }
     });
 
-    setProducts(updatedProducts);
-    saveStoredProducts(updatedProducts);
-
-    const updatedLogs = [...newLogs, ...stockLogs];
-    setStockLogs(updatedLogs);
-    saveStoredStockLogs(updatedLogs);
-
-    showToast(`Added +${amountPerItem} units to ${productIds.length} items`);
+    try {
+      await batchSaveProductsToFirestore(updatedProducts);
+      await batchSaveStockLogsToFirestore(newLogs);
+      showToast(`Added +${amountPerItem} units to ${productIds.length} items (Synced to Cloud)`);
+    } catch (err: any) {
+      console.error('Error batch restocking in Firestore:', err);
+      showToast(`Stock restock applied.`);
+    }
   };
 
-  // Record Sale & Automatic Stock Reduction
+  // Record Sale & Automatic Stock Reduction across inventory, sales, customers, bills
   const handleRecordSale = (newSaleData: Omit<Sale, 'id' | 'invoiceNumber'>): Sale => {
     const now = new Date().toISOString();
     const invoiceNum = `SMW-INV-${String(sales.length + 1).padStart(3, '0')}`;
@@ -431,19 +592,17 @@ export default function App() {
       invoiceNumber: invoiceNum,
     };
 
-    // 1. Get freshest products from localStorage (or current state) to prevent stale closure
-    const stored = getStoredProducts();
-    const baseProducts = stored.length > 0 ? stored : products;
-    const updatedProducts: Product[] = baseProducts.map((p) => ({ ...p }));
+    const baseProducts = products.map((p) => ({ ...p }));
+    const prodsToSync: Product[] = [];
     const newLogs: StockLog[] = [];
 
-    // 2. Automatically decrease inventory quantity for each sold item
+    // Automatically decrease inventory quantity for each sold item
     completedSale.items.forEach((soldItem) => {
       const soldQty = Math.max(0, Number(soldItem.quantity) || 0);
       if (soldQty <= 0) return;
 
       // Find matching product by ID (string coerced), or SKU, or Name + Color
-      const prodIndex = updatedProducts.findIndex((p) => {
+      const prodIndex = baseProducts.findIndex((p) => {
         if (p.id && soldItem.productId && String(p.id).trim() === String(soldItem.productId).trim()) {
           return true;
         }
@@ -468,7 +627,7 @@ export default function App() {
       });
 
       if (prodIndex >= 0) {
-        const prod = updatedProducts[prodIndex];
+        const prod = baseProducts[prodIndex];
         const previousTotalQty = Number(prod.quantity) || 0;
         const soldSize = soldItem.size || 'No Size';
 
@@ -500,13 +659,15 @@ export default function App() {
           newTotalQty = Math.max(0, previousTotalQty - soldQty);
         }
 
-        // Update in-place in updatedProducts
-        updatedProducts[prodIndex] = {
+        const modifiedProd = {
           ...prod,
           sizeQuantities: updatedSizeQuantities ?? prod.sizeQuantities,
           quantity: newTotalQty,
           updatedAt: now,
         };
+
+        baseProducts[prodIndex] = modifiedProd;
+        prodsToSync.push(modifiedProd);
 
         newLogs.push({
           id: `log-${Date.now()}-${prod.id}-${soldItem.size || 'sz'}-${Math.floor(Math.random() * 1000)}`,
@@ -522,19 +683,12 @@ export default function App() {
       }
     });
 
-    // 3. Persist to localStorage and React state immediately
-    saveStoredProducts(updatedProducts);
-    setProducts([...updatedProducts]);
+    // Record to Firestore collections: sales, bills, customers, inventory, stock_logs
+    recordSaleToFirestore(completedSale, prodsToSync, newLogs).catch((err) => {
+      console.error('Failed to sync sale to Firestore:', err);
+    });
 
-    const updatedSales = [completedSale, ...sales];
-    saveStoredSales(updatedSales);
-    setSales(updatedSales);
-
-    const updatedLogs = [...newLogs, ...stockLogs];
-    saveStoredStockLogs(updatedLogs);
-    setStockLogs(updatedLogs);
-
-    showToast(`Bill #${invoiceNum} generated! Stock reduced by sold quantities.`);
+    showToast(`Bill #${invoiceNum} generated! Stock synced to laptop & mobile.`);
     return completedSale;
   };
 
@@ -573,6 +727,7 @@ export default function App() {
           setIsProductModalOpen(true);
         }}
         onOpenBackupRestore={handleOpenBackupRestore}
+        isCloudSynced={isCloudSynced}
       />
 
       {/* Toast Notification */}
@@ -630,6 +785,8 @@ export default function App() {
             onAdjustStock={handleAdjustStock}
             onBatchRestock={handleBatchRestock}
             onNavigateToProducts={() => setActiveTab('products')}
+            onOpenBarcodeScanner={() => handleOpenScanner('stock')}
+            highlightedProductId={highlightedStockProductId}
           />
         )}
 
@@ -637,11 +794,14 @@ export default function App() {
           <SalesManagementView
             products={products}
             sales={sales}
+            customers={customers}
+            bills={bills}
             onRecordSale={handleRecordSale}
             onViewReceipt={(sale) => setActiveReceiptSale(sale)}
             onNavigateToProducts={() => setActiveTab('products')}
             initialSelectedProduct={preselectedSaleProduct}
             onClearInitialProduct={() => setPreselectedSaleProduct(null)}
+            onOpenBarcodeScanner={() => handleOpenScanner('sales')}
           />
         )}
 
@@ -671,7 +831,7 @@ export default function App() {
               Clear All Data
             </button>
             <span>·</span>
-            <span className="text-emerald-400/80">LocalStorage Active</span>
+            <span className="text-emerald-400/80">Firestore Cloud Sync Active</span>
           </div>
         </div>
       </footer>
@@ -682,9 +842,33 @@ export default function App() {
         onClose={() => {
           setIsProductModalOpen(false);
           setProductToEdit(null);
+          setScannedInitialBarcode('');
         }}
         onSave={handleSaveProduct}
         productToEdit={productToEdit}
+        initialBarcode={scannedInitialBarcode}
+        onOpenScanner={() => handleOpenScanner('product_form')}
+      />
+
+      {/* Fullscreen Camera Barcode Scanner */}
+      <BarcodeScannerModal
+        isOpen={isBarcodeScannerOpen}
+        onClose={() => setIsBarcodeScannerOpen(false)}
+        onScanSuccess={handleBarcodeScanned}
+        title={
+          scannerOrigin === 'sales'
+            ? 'Scan Product for Bill'
+            : scannerOrigin === 'stock'
+            ? 'Scan Product for Stock Update'
+            : 'Scan Product Barcode'
+        }
+        subtitle={
+          scannerOrigin === 'sales'
+            ? 'Scan barcode to find product and add to cart'
+            : scannerOrigin === 'stock'
+            ? 'Scan barcode to quickly adjust inventory'
+            : 'Scan barcode to pre-fill product details'
+        }
       />
 
       {/* Safe Delete Confirmation Modal */}

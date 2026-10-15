@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Product, SHIRT_SIZES, PANT_SIZES, NO_SIZE } from '../types';
 import { CATEGORIES } from '../data/seedData';
-import { X, Check, PackagePlus, AlertCircle, Sparkles } from 'lucide-react';
+import { X, Check, PackagePlus, AlertCircle, Sparkles, Camera } from 'lucide-react';
 
 interface ProductFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (productData: Partial<Product>) => void;
   productToEdit?: Product | null;
+  initialBarcode?: string;
+  onOpenScanner?: () => void;
 }
 
 // Helper to determine sizes based on category
@@ -68,9 +70,12 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   onClose,
   onSave,
   productToEdit,
+  initialBarcode,
+  onOpenScanner,
 }) => {
   const [name, setName] = useState('');
   const [sku, setSku] = useState('');
+  const [barcode, setBarcode] = useState('');
   const [category, setCategory] = useState<string>('Casual Shirts');
   const [selectedSizes, setSelectedSizes] = useState<string[]>(['M', 'L', 'XL', 'XXL']);
   const [sizeQuantities, setSizeQuantities] = useState<Record<string, number | ''>>({});
@@ -105,6 +110,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
     if (productToEdit) {
       setName(productToEdit.name);
       setSku(productToEdit.sku || '');
+      setBarcode(productToEdit.barcode || '');
       setCategory(productToEdit.category);
       setSizeSystem('auto');
 
@@ -132,8 +138,6 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       } else if (initialSizes.length === 1) {
         initialQtyMap[initialSizes[0]] = productToEdit.quantity;
       } else {
-        // Multi-size product without prior size-wise breakdown:
-        // Set fields ready for admin input without injecting fake data
         initialSizes.forEach((s) => {
           initialQtyMap[s] = '';
         });
@@ -148,6 +152,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       setName('');
       setCategory('Casual Shirts');
       setSizeSystem('auto');
+      setBarcode(initialBarcode || '');
       const defaultSizes = ['M', 'L', 'XL', 'XXL'];
       setSelectedSizes(defaultSizes);
       const initialQtyMap: Record<string, number | ''> = {};
@@ -163,7 +168,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       generateSkuForCategory('Casual Shirts');
     }
     setError('');
-  }, [productToEdit, isOpen]);
+  }, [productToEdit, isOpen, initialBarcode]);
 
   const generateSkuForCategory = (cat: string) => {
     const prefix = cat.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, 'PRD');
@@ -312,6 +317,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
     onSave({
       name: name.trim(),
       sku: sku.trim().toUpperCase() || `SMW-${Date.now().toString().slice(-4)}`,
+      barcode: barcode.trim() || undefined,
       category: category.trim(),
       sizes: selectedSizes,
       size: selectedSizes.join(', '),
@@ -379,8 +385,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             />
           </div>
 
-          {/* 2. Category & SKU */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* 2. Category, SKU & Barcode */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block font-medium text-neutral-300 mb-1">
                 Category *
@@ -400,14 +406,14 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="font-medium text-neutral-300">Product Code / SKU</label>
+                <label className="font-medium text-neutral-300">Product SKU *</label>
                 <button
                   type="button"
                   onClick={() => generateSkuForCategory(category)}
                   className="text-[11px] text-amber-400 hover:underline flex items-center gap-1"
                 >
                   <Sparkles className="w-3 h-3" />
-                  <span>Auto Generate</span>
+                  <span>Auto</span>
                 </button>
               </div>
               <input
@@ -417,6 +423,45 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 placeholder="SMW-CSH-101"
                 className="w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-neutral-200 font-mono text-xs focus:outline-none focus:border-amber-500"
               />
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="font-medium text-neutral-300 flex items-center gap-1">
+                  <span>Barcode / SKU</span>
+                  <span className="text-[10px] text-neutral-500 font-normal">(Optional)</span>
+                </label>
+                {onOpenScanner && (
+                  <button
+                    type="button"
+                    onClick={onOpenScanner}
+                    className="text-[11px] text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1 hover:underline cursor-pointer"
+                    title="Scan barcode with camera"
+                  >
+                    <Camera className="w-3 h-3" />
+                    <span>Scan</span>
+                  </button>
+                )}
+              </div>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={barcode}
+                  onChange={(e) => setBarcode(e.target.value)}
+                  placeholder="Barcode / EAN"
+                  className="w-full pl-3 pr-8 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-neutral-200 font-mono text-xs focus:outline-none focus:border-amber-500"
+                />
+                {onOpenScanner && (
+                  <button
+                    type="button"
+                    onClick={onOpenScanner}
+                    className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-amber-400 hover:text-amber-300 transition-colors cursor-pointer"
+                    title="Scan barcode with camera"
+                  >
+                    <Camera className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 

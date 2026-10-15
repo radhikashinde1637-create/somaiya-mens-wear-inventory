@@ -11,6 +11,8 @@ import {
   Package,
   ClipboardList,
   Sparkles,
+  Camera,
+  Search,
 } from 'lucide-react';
 
 interface StockManagementViewProps {
@@ -25,6 +27,8 @@ interface StockManagementViewProps {
   ) => void;
   onBatchRestock: (productIds: string[], amountPerItem: number) => void;
   onNavigateToProducts: () => void;
+  onOpenBarcodeScanner?: () => void;
+  highlightedProductId?: string | null;
 }
 
 export const StockManagementView: React.FC<StockManagementViewProps> = ({
@@ -33,18 +37,45 @@ export const StockManagementView: React.FC<StockManagementViewProps> = ({
   onAdjustStock,
   onBatchRestock,
   onNavigateToProducts,
+  onOpenBarcodeScanner,
+  highlightedProductId,
 }) => {
   const [selectedProductId, setSelectedProductId] = useState<string>(
-    products[0]?.id || ''
+    highlightedProductId || products[0]?.id || ''
   );
   const [selectedSize, setSelectedSize] = useState<string>('All');
+  const [stockSearchQuery, setStockSearchQuery] = useState<string>('');
   const [adjustType, setAdjustType] = useState<'IN' | 'OUT' | 'ADJUST'>('IN');
   const [quantityInput, setQuantityInput] = useState<number | ''>(5);
   const [reasonInput, setReasonInput] = useState<string>('New stock arrival from supplier');
   const [successMessage, setSuccessMessage] = useState<string>('');
 
+  React.useEffect(() => {
+    if (highlightedProductId) {
+      setSelectedProductId(highlightedProductId);
+      setSelectedSize('All');
+    }
+  }, [highlightedProductId]);
+
   const lowStockItems = products.filter((p) => p.quantity <= p.minimumStockLevel);
   const selectedProduct = products.find((p) => p.id === (selectedProductId || products[0]?.id));
+
+  const handleSearchStock = (query: string) => {
+    setStockSearchQuery(query);
+    if (!query.trim()) return;
+    const q = query.trim().toLowerCase();
+    const found = products.find(
+      (p) =>
+        (p.barcode && p.barcode.toLowerCase() === q) ||
+        p.sku.toLowerCase() === q ||
+        p.name.toLowerCase().includes(q) ||
+        p.id === q
+    );
+    if (found) {
+      setSelectedProductId(found.id);
+      setSelectedSize('All');
+    }
+  };
 
   const handleQuickAdjustSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,8 +124,8 @@ export const StockManagementView: React.FC<StockManagementViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* Header with Search and Scan Button */}
+      <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-neutral-100">
             Stock Management
@@ -103,15 +134,45 @@ export const StockManagementView: React.FC<StockManagementViewProps> = ({
             Add stock from deliveries, write off damaged pieces, and monitor inventory movements.
           </p>
         </div>
-        {lowStockItems.length > 0 && (
-          <button
-            onClick={handleBatchRestockAll}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-neutral-950 font-semibold rounded-lg text-xs sm:text-sm transition-colors shadow-sm whitespace-nowrap self-start sm:self-auto"
-          >
-            <Sparkles className="w-4 h-4" />
-            <span>Restock All Low Items (+10)</span>
-          </button>
-        )}
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Search Product / Barcode Input */}
+          <div className="relative flex-1 sm:w-64">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-neutral-500">
+              <Search className="w-3.5 h-3.5" />
+            </div>
+            <input
+              type="text"
+              value={stockSearchQuery}
+              onChange={(e) => handleSearchStock(e.target.value)}
+              placeholder="Search product / barcode..."
+              className="w-full pl-8 pr-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-amber-500 font-mono"
+            />
+          </div>
+
+          {/* Barcode Scanner Button */}
+          {onOpenBarcodeScanner && (
+            <button
+              type="button"
+              onClick={onOpenBarcodeScanner}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-neutral-950 font-bold rounded-lg text-xs sm:text-sm transition-colors shadow-sm whitespace-nowrap cursor-pointer"
+              title="Open camera barcode scanner"
+            >
+              <Camera className="w-4 h-4" />
+              <span>Scan</span>
+            </button>
+          )}
+
+          {lowStockItems.length > 0 && (
+            <button
+              onClick={handleBatchRestockAll}
+              className="flex items-center gap-1.5 px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 rounded-lg text-xs sm:text-sm transition-colors whitespace-nowrap"
+            >
+              <Sparkles className="w-4 h-4 text-amber-400" />
+              <span>Restock Low (+10)</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {successMessage && (

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Product, Sale, SaleItem, PaymentMethod } from '../types';
+import { Product, Sale, SaleItem, PaymentMethod, Customer, Bill } from '../types';
 import { formatINR, formatDateTime, getProductSizesList, getProductSizeStock } from '../utils/storage';
 import {
   Receipt,
@@ -20,26 +20,33 @@ import {
   Phone,
   Tag,
   CheckCircle2,
+  Camera,
 } from 'lucide-react';
 
 interface SalesManagementViewProps {
   products: Product[];
   sales: Sale[];
+  customers?: Customer[];
+  bills?: Bill[];
   onRecordSale: (newSale: Omit<Sale, 'id' | 'invoiceNumber'>) => Sale;
   onViewReceipt: (sale: Sale) => void;
   onNavigateToProducts: () => void;
   initialSelectedProduct?: Product | null;
   onClearInitialProduct?: () => void;
+  onOpenBarcodeScanner?: () => void;
 }
 
 export const SalesManagementView: React.FC<SalesManagementViewProps> = ({
   products,
   sales,
+  customers,
+  bills,
   onRecordSale,
   onViewReceipt,
   onNavigateToProducts,
   initialSelectedProduct,
   onClearInitialProduct,
+  onOpenBarcodeScanner,
 }) => {
   // POS Cart State
   const [cart, setCart] = useState<SaleItem[]>([]);
@@ -94,6 +101,7 @@ export const SalesManagementView: React.FC<SalesManagementViewProps> = ({
       return (
         p.name.toLowerCase().includes(q) ||
         p.sku.toLowerCase().includes(q) ||
+        (p.barcode && p.barcode.toLowerCase().includes(q)) ||
         p.category.toLowerCase().includes(q) ||
         p.color.toLowerCase().includes(q) ||
         sizesStr.includes(q)
@@ -396,17 +404,31 @@ export const SalesManagementView: React.FC<SalesManagementViewProps> = ({
             <>
               {/* Product search & Category filter */}
               <div className="space-y-2 mb-3">
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-neutral-500">
-                    <Search className="w-3.5 h-3.5" />
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-neutral-500">
+                      <Search className="w-3.5 h-3.5" />
+                    </div>
+                    <input
+                      type="text"
+                      value={productSearch}
+                      onChange={(e) => setProductSearch(e.target.value)}
+                      placeholder="Search by name, SKU, barcode, size..."
+                      className="w-full pl-8 pr-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-amber-500 font-mono"
+                    />
                   </div>
-                  <input
-                    type="text"
-                    value={productSearch}
-                    onChange={(e) => setProductSearch(e.target.value)}
-                    placeholder="Search by name, SKU, color, size (e.g. 36, 38, M)..."
-                    className="w-full pl-8 pr-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-amber-500"
-                  />
+
+                  {onOpenBarcodeScanner && (
+                    <button
+                      type="button"
+                      onClick={onOpenBarcodeScanner}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-neutral-950 font-bold rounded-lg text-xs transition-colors shrink-0 shadow-sm cursor-pointer"
+                      title="Scan product barcode to add to cart"
+                    >
+                      <Camera className="w-4 h-4" />
+                      <span>Scan</span>
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
@@ -896,17 +918,39 @@ export const SalesManagementView: React.FC<SalesManagementViewProps> = ({
               {/* Customer Details */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-neutral-950/60 p-3.5 rounded-xl border border-neutral-800/90">
                 <div>
-                  <label className="block font-medium text-neutral-300 mb-1 flex items-center gap-1.5">
-                    <UserIcon className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Customer Name</span>
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-medium text-neutral-300 flex items-center gap-1.5">
+                      <UserIcon className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Customer Name</span>
+                    </label>
+                    {customers && customers.length > 0 && (
+                      <span className="text-[10px] text-amber-400/80 font-mono">
+                        {customers.length} saved
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="text"
+                    list="customer-names-list"
                     value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCustomerName(val);
+                      const match = customers?.find((c) => c.name.toLowerCase() === val.toLowerCase());
+                      if (match && match.phone && !customerPhone) {
+                        setCustomerPhone(match.phone);
+                      }
+                    }}
                     placeholder="Enter customer name (or leave for Walk-in)"
                     className="w-full px-3 py-1.5 bg-neutral-900 border border-neutral-800 rounded-lg text-neutral-200 focus:outline-none focus:border-amber-500 text-xs"
                   />
+                  <datalist id="customer-names-list">
+                    {customers?.map((c) => (
+                      <option key={c.id} value={c.name}>
+                        {c.phone ? `Phone: ${c.phone}` : ''}
+                      </option>
+                    ))}
+                  </datalist>
                 </div>
 
                 <div>
@@ -916,11 +960,26 @@ export const SalesManagementView: React.FC<SalesManagementViewProps> = ({
                   </label>
                   <input
                     type="tel"
+                    list="customer-phones-list"
                     value={customerPhone}
-                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCustomerPhone(val);
+                      const match = customers?.find((c) => c.phone === val);
+                      if (match && match.name && !customerName) {
+                        setCustomerName(match.name);
+                      }
+                    }}
                     placeholder="10-digit mobile number"
                     className="w-full px-3 py-1.5 bg-neutral-900 border border-neutral-800 rounded-lg text-neutral-200 font-mono focus:outline-none focus:border-amber-500 text-xs"
                   />
+                  <datalist id="customer-phones-list">
+                    {customers?.filter((c) => c.phone).map((c) => (
+                      <option key={c.id} value={c.phone}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </datalist>
                 </div>
               </div>
 

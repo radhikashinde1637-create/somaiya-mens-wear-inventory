@@ -19,6 +19,7 @@ export interface Product {
   id: string;
   name: string;
   sku: string;
+  barcode?: string; // Barcode scanned via camera scanner (EAN, UPC, Code128, QR, etc.)
   category: ProductCategory | string;
   sizes: string[]; // Multiple sizes e.g. ['M', 'L', 'XL', 'XXL']
   size?: string; // Fallback or joined string
@@ -78,6 +79,32 @@ export interface AdminUser {
   username: string;
   name: string;
   role: 'Store Admin';
+}
+
+export interface Customer {
+  id: string;
+  name: string;
+  phone?: string;
+  totalPurchases: number;
+  totalBills: number;
+  lastPurchaseDate: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Bill {
+  id: string;
+  invoiceNumber: string;
+  date: string;
+  customerName?: string;
+  customerPhone?: string;
+  items: SaleItem[];
+  subtotal: number;
+  discount: number;
+  totalAmount: number;
+  paymentMethod: PaymentMethod;
+  notes?: string;
+  createdAt: string;
 }
 
 export type ActiveTab = 'dashboard' | 'products' | 'stock' | 'sales' | 'reports';

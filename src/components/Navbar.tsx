@@ -24,6 +24,7 @@ interface NavbarProps {
   onOpenNewSale: () => void;
   onOpenAddProduct: () => void;
   onOpenBackupRestore?: (mode?: 'download' | 'restore') => void;
+  isCloudSynced?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -35,6 +36,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenNewSale,
   onOpenAddProduct,
   onOpenBackupRestore,
+  isCloudSynced = true,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -93,6 +95,24 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Zone 3: Primary Actions & Admin Profile */}
           <div className="flex items-center gap-2 sm:gap-3">
+            {/* Firestore Cloud Sync Badge */}
+            <div
+              className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors ${
+                isCloudSynced
+                  ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25'
+                  : 'text-amber-400 bg-amber-500/10 border-amber-500/25'
+              }`}
+              title="Firebase Firestore realtime database active. Laptop and mobile devices sync immediately."
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  isCloudSynced ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                }`}
+              />
+              <span className="hidden xl:inline">{isCloudSynced ? 'Firestore Live Sync' : 'Connecting...'}</span>
+              <span className="xl:hidden">{isCloudSynced ? 'Live Sync' : 'Syncing'}</span>
+            </div>
+
             {/* Low stock alert indicator */}
             {lowStockCount > 0 && (
               <button
@@ -218,6 +238,27 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </button>
               );
             })}
+          </div>
+
+          {/* Mobile Cloud Sync Status */}
+          <div className="pt-1">
+            <div
+              className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg border ${
+                isCloudSynced
+                  ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                  : 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    isCloudSynced ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                  }`}
+                />
+                <span>{isCloudSynced ? 'Firestore Cloud Active' : 'Connecting to Firestore...'}</span>
+              </div>
+              <span className="text-[10px] text-neutral-400 font-mono">Mobile & Laptop Sync</span>
+            </div>
           </div>
 
           {/* Mobile Backup & Restore Quick Action */}

@@ -57,6 +57,7 @@ export const ProductListView: React.FC<ProductListViewProps> = ({
           const matches =
             item.name.toLowerCase().includes(q) ||
             item.sku.toLowerCase().includes(q) ||
+            (item.barcode && item.barcode.toLowerCase().includes(q)) ||
             item.category.toLowerCase().includes(q) ||
             item.color.toLowerCase().includes(q) ||
             sizeMatches;
@@ -329,8 +330,13 @@ export const ProductListView: React.FC<ProductListViewProps> = ({
                         <div className="font-semibold text-neutral-100 group-hover:text-amber-300 transition-colors">
                           {p.name}
                         </div>
-                        <div className="text-[11px] text-neutral-500 font-mono mt-0.5">
-                          {p.sku}
+                        <div className="text-[11px] text-neutral-500 font-mono mt-0.5 flex items-center gap-1.5 flex-wrap">
+                          <span>{p.sku}</span>
+                          {p.barcode && (
+                            <span className="text-amber-400/90 bg-amber-500/10 px-1 rounded text-[10px] border border-amber-500/20">
+                              BARCODE: {p.barcode}
+                            </span>
+                          )}
                         </div>
                       </td>
 
@@ -487,7 +493,14 @@ export const ProductListView: React.FC<ProductListViewProps> = ({
               >
                 <div>
                   <div className="flex items-start justify-between gap-2 mb-2">
-                    <span className="text-xs text-neutral-500 font-mono">{p.sku}</span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs text-neutral-500 font-mono">{p.sku}</span>
+                      {p.barcode && (
+                        <span className="text-[10px] text-amber-400 bg-amber-500/10 px-1 rounded border border-amber-500/20 font-mono">
+                          {p.barcode}
+                        </span>
+                      )}
+                    </div>
                     <span
                       className={`text-[11px] font-semibold font-mono tabular-nums px-2 py-0.5 rounded ${
                         isOutOfStock
