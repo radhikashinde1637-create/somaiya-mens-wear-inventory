@@ -1,0 +1,6 @@
+{
+  "name": "Somaiya Men's Wear Inventory",
+  "description": "Clean and responsive inventory and sales management system for Somaiya Men's Wear clothing store.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
